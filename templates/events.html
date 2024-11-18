@@ -1,0 +1,241 @@
+{% extends "layout.html" %}
+{% block main %}
+<div class="container mt-3">
+    <!-- Flex container for the forms and buttons -->
+    <div class="d-flex flex-wrap align-items-end">
+        <!-- Form for fetching logs -->
+        <form action="/" method="get" class="d-flex me-3">
+            <div class="d-flex flex-column me-2">
+                <label for="report_id" class="form-label">Warcraft Logs Report ID:</label>
+                <input type="text" id="report_id" name="report_id" class="form-control" placeholder="Enter WCL Report ID" required value="{{ request.args.get('report_id', '') }}">
+            </div>
+            <button class="btn btn-info align-self-end" type="submit">Fetch Log</button>
+        </form>
+
+        <!-- Form for selecting fights and players and fetching events -->
+        {% if fights %}
+        <form action="/events" method="get" class="d-flex me-3">
+            <input type="hidden" name="report_id" value="{{ request.args.get('report_id', '') }}">
+            <div class="d-flex flex-column me-2">
+                <label for="fightData" class="form-label">Select Fight:</label>
+                <select name="fightData" id="fightData" class="form-select" required>
+                    <option value="" disabled selected>Select a fight...</option>
+                    {% for fight in fights %}
+                    <option value="{{ fight.id }}-{{ fight.start }}-{{ fight.end }}"
+                            {% if fight.id|string == request.args.get('fightData', '').split('-')[0] %}selected{% endif %}>
+                        {{ fight.name }} - 
+                        {% if fight.kill %}
+                        Kill
+                        {% else %}
+                        Wipe
+                        {% endif %}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="d-flex flex-column me-2">
+                <label for="player_id" class="form-label">Select Player:</label>
+                <select name="player_id" id="player_id" class="form-select" required>
+                    <option value="" disabled selected>Select a player...</option>
+                    {% for player in players if player.class == 'Shaman' %}
+                    <option value="{{ player.id }}"
+                            {% if player.id|string == request.args.get('player_id', '') %}selected{% endif %}>
+                        {{ player.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button class="btn btn-primary align-self-end" type="submit">Analyze Casts</button>
+        </form>
+        {% endif %}
+    </div>
+
+    <!-- Flex container for additional information and table -->
+    <div class="d-flex flex-row mt-4">
+        <!-- Left column for total downtime and other info -->
+        <div class="d-flex flex-column w-50 me-4 p-3" style="border-right: 1px solid #ccc;">
+            <h2>Downtime <span class="info-icon" data-bs-toggle="tooltip" title="Time before first global and between last global to fight end time is ignored. Damage estimates inaccurate by design as downtime will not always gain DPS.">&#9432;</span></h2>
+            {% if total_downtime is defined and downtime_percentage is defined %}
+            <div class="mb-3">
+                <strong>Total Downtime:</strong> <span class="stat-value">{{ total_downtime | round(2) }} ms</span><br>
+                <strong>Downtime Percentage:</strong> <span class="stat-value">{{ (downtime_percentage * 100) | round(2) }}%</span><br>
+                {% set average_damage_lost_due_to_downtime = base_dps * downtime_percentage %}
+                <strong>Average DPS Lost Due to Downtime:</strong> <span class="stat-value">{{ average_damage_lost_due_to_downtime | round(2) }}</span><br>
+                {% set estimated_max_damage = base_dps * (1 + downtime_percentage) %}
+                <strong>Estimated DPS with No Downtime:</strong> <span class="stat-value" id="damage_no_downtime">{{ estimated_max_damage | round(2) }}</span> <span class="stat-value">(+<span id="damage_no_downtime_loss">{{ (estimated_max_damage - base_dps) | round(2) }}</span>)</span>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Right column for major and minor buffs -->
+        <div class="d-flex flex-column w-50">
+            <h2>Major Buffs <span class="info-icon" data-bs-toggle="tooltip" title="Automatically toggles buffs according to the logs. You can manually toggle in case of an error.">&#9432;</span></h2>
+            <div class="d-flex mb-3">
+                <div class="buff-icon {% if worldbuffs[446698] %}icon-active{% else %}icon-inactive{% endif %}" data-coefficient="1.091" id="buff_446698" onclick="toggleBuff(this)">
+                    <img src="https://wow.zamimg.com/images/wow/icons/large/achievement_bg_killxenemies_generalsroom.jpg" alt="Fervor of the Temple Explorer" class="img-fluid">
+                </div>
+                <div class="buff-icon {% if worldbuffs[15366] %}icon-active{% else %}icon-inactive{% endif %}" data-coefficient="1.058" id="buff_15366" onclick="toggleBuff(this)">
+                    <img src="https://wow.zamimg.com/images/wow/icons/large/spell_holy_mindvision.jpg" alt="Songflower Serenade" class="img-fluid">
+                </div>
+                <div class="buff-icon {% if worldbuffs[23768] %}icon-active{% else %}icon-inactive{% endif %}" data-coefficient="1.1" id="buff_23768" onclick="toggleBuff(this)">
+                    <img src="https://wow.zamimg.com/images/wow/icons/large/inv_misc_orb_02.jpg" alt="Sayge's Dark Fortune of Damage" class="img-fluid">
+                </div>
+                <div class="buff-icon {% if worldbuffs[446335] %}icon-active{% else %}icon-inactive{% endif %}" data-coefficient="1.025" id="buff_446335" onclick="toggleBuff(this)">
+                    <img src="https://wow.zamimg.com/images/wow/icons/large/inv_alchemy_potion_02.jpg" alt="Atal'ai Mojo of War" class="img-fluid">
+                </div>
+            </div>
+            <div class="mb-3">
+                <strong>Estimated DPS with All Major Buffs:</strong> <span class="stat-value" id="damage_major_buffs">{{ (base_dps) | round(2) }}</span> <span class="stat-value">(+<span id="damage_major_buffs_loss">{{ (base_dps - base_dps) | round(2) }}</span>)</span>
+            </div>
+
+            <hr>
+
+            <h2>Minor Buffs <span class="info-icon" data-bs-toggle="tooltip" title="Assumes all buffs present. Manually toggle the buffs that are missing by clicking on them.">&#9432;</span></h2>
+            <div class="d-flex mb-3">
+                <div class="buff-icon icon-active" data-coefficient="1.004" id="buff_grilled_squid" onclick="toggleBuff(this)">
+                    <img src="https://wow.zamimg.com/images/wow/icons/large/inv_misc_fish_13.jpg" alt="Grilled Squid" class="img-fluid">
+                </div>
+                <div class="buff-icon icon-active" data-coefficient="1.0532" id="buff_dragonbreath_chili" onclick="toggleBuff(this)">
+                    <img src="https://wow.zamimg.com/images/wow/icons/large/inv_drink_17.jpg" alt="Dragonbreath Chili" class="img-fluid">
+                </div>
+                <div class="buff-icon icon-active" data-coefficient="1.0217" id="buff_mongoose_elixir" onclick="toggleBuff(this)">
+                    <img src="https://wow.zamimg.com/images/wow/icons/large/inv_potion_32.jpg" alt="Mongoose Elixir" class="img-fluid">
+                </div>
+                <div class="buff-icon icon-active" data-coefficient="1.0207" id="buff_elixir_of_giants" onclick="toggleBuff(this)">
+                    <img src="https://wow.zamimg.com/images/wow/icons/large/inv_potion_01.jpg" alt="Elixir of Giants" class="img-fluid">
+                </div>
+                <div class="buff-icon icon-active" data-coefficient="1.0112" id="buff_arcane_elixir" onclick="toggleBuff(this)">
+                    <img src="https://wow.zamimg.com/images/wow/icons/large/inv_potion_30.jpg" alt="Arcane Elixir" class="img-fluid">
+                </div>
+                <div class="buff-icon icon-active" data-coefficient="1.0015" id="buff_firepower_elixir" onclick="toggleBuff(this)">
+                    <img src="https://wow.zamimg.com/images/wow/icons/large/inv_potion_33.jpg" alt="Elixir of Firepower" class="img-fluid">
+                </div>
+                <div class="buff-icon icon-active" data-coefficient="1.0333" id="buff_enchanted_sigil" onclick="toggleBuff(this)">
+                    <img src="https://wow.zamimg.com/images/wow/icons/large/inv_sigil_freya.jpg" alt="Enchanted Sigil" class="img-fluid">
+                </div>
+                <div class="buff-icon icon-active" data-coefficient="1.0120" id="buff_winterfall_firewater" onclick="toggleBuff(this)">
+                    <img src="https://wow.zamimg.com/images/wow/icons/large/inv_potion_92.jpg" alt="Winterfall Firewater" class="img-fluid">
+                </div>
+            </div>
+            <div class="mb-3">
+                <strong>Estimated DPS with All Minor Buffs:</strong> <span class="stat-value" id="damage_minor_buffs">{{ (base_dps) | round(2) }}</span> <span class="stat-value">(+<span id="damage_minor_buffs_loss">{{ (base_dps - base_dps) | round(2) }}</span>)</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="d-flex flex-column mt-4">
+        <strong>Estimated DPS with No Downtime and All Buffs:</strong> <span class="stat-value" id="damage_no_downtime_all_buffs">{{ (base_dps) | round(2) }}</span> <span class="stat-value">(+<span id="damage_no_downtime_all_buffs_loss">{{ (base_dps)  | round(2) }}</span>)</span>
+    </div>
+
+    <!-- Table container to control the width -->
+    <div class="table-responsive mt-4" style="text-align: left;">
+        {% if events %}
+        <table class="table table-dark table-hover">
+            <thead>
+                <tr>
+                    <th>Fight Time (seconds)</th>
+                    <th>Type</th>
+                    <th>Ability Name</th>
+                    <th>Downtime (ms)</th>
+                    <th>Maelstorm wasted (time since 5stack)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for event in events %}
+                <tr>
+                    <td>{{ ((event.timestamp|int - start_time|int) / 1000) }}</td>
+                    <td>{{ event.type }}</td>
+                    <td>{{ event.abilityName }}</td>
+                    <td>{{ event.downtime }}</td>
+                    <td>{{ event.buffUp }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        let baseDPS = {{ base_dps }};
+        let downtimePercentage = {{ downtime_percentage }};
+        let majorBuffs = [
+            'buff_446698',
+            'buff_15366',
+            'buff_23768',
+            'buff_446335'
+        ];
+        let minorBuffs = [
+            'buff_grilled_squid',
+            'buff_dragonbreath_chili',
+            'buff_mongoose_elixir',
+            'buff_elixir_of_giants',
+            'buff_arcane_elixir',
+            'buff_firepower_elixir',
+            'buff_enchanted_sigil',
+            'buff_winterfall_firewater'
+        ];
+
+        function toggleBuff(buffElement) {
+            let isActive = buffElement.classList.contains('icon-active');
+            buffElement.classList.toggle('icon-active', !isActive);
+            buffElement.classList.toggle('icon-inactive', isActive);
+            updateDPS();
+        }
+
+        function calculateMultiplier(buffIds) {
+            let multiplier = 1;
+            buffIds.forEach(buffId => {
+                let buffIcon = document.getElementById(buffId);
+                if (!buffIcon.classList.contains('icon-active')) {
+                    let coefficient = parseFloat(buffIcon.dataset.coefficient);
+                    if (!isNaN(coefficient)) {
+                        multiplier *= coefficient;
+                    }
+                }
+            });
+            return multiplier;
+        }
+
+        function updateDPS() {
+            let majorBuffsMultiplier = calculateMultiplier(majorBuffs);
+            let minorBuffsMultiplier = calculateMultiplier(minorBuffs);
+
+            let potentialDPSWithMajorBuffs = baseDPS * majorBuffsMultiplier;
+            let potentialDPSWithMinorBuffs = baseDPS * minorBuffsMultiplier;
+            let potentialDPSWithNoDowntime = baseDPS * (1 + downtimePercentage);
+            let potentialDPSWithNoDowntimeAllBuffs = baseDPS * (1 + downtimePercentage) * majorBuffsMultiplier * minorBuffsMultiplier;
+
+            document.getElementById('damage_major_buffs').textContent = potentialDPSWithMajorBuffs.toFixed(2);
+            document.getElementById('damage_major_buffs_loss').textContent = (potentialDPSWithMajorBuffs - baseDPS).toFixed(2);
+
+            document.getElementById('damage_minor_buffs').textContent = potentialDPSWithMinorBuffs.toFixed(2);
+            document.getElementById('damage_minor_buffs_loss').textContent = (potentialDPSWithMinorBuffs - baseDPS).toFixed(2);
+
+            document.getElementById('damage_no_downtime').textContent = potentialDPSWithNoDowntime.toFixed(2);
+            document.getElementById('damage_no_downtime_loss').textContent = (potentialDPSWithNoDowntime - baseDPS).toFixed(2);
+
+            document.getElementById('damage_no_downtime_all_buffs').textContent = potentialDPSWithNoDowntimeAllBuffs.toFixed(2);
+            document.getElementById('damage_no_downtime_all_buffs_loss').textContent = (potentialDPSWithNoDowntimeAllBuffs - baseDPS).toFixed(2);
+        }
+
+        // Attach event listeners to buff icons
+        majorBuffs.concat(minorBuffs).forEach(buffId => {
+            document.getElementById(buffId).addEventListener('click', function() {
+                toggleBuff(this);
+            });
+        });
+
+        // Initial DPS update
+        updateDPS();
+
+        // Initialize tooltips
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+        var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl)
+        })
+    });
+</script>
+
+{% endblock %}

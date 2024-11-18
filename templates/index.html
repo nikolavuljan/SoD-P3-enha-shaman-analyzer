@@ -1,0 +1,57 @@
+{% extends "layout.html" %}
+{% block main %}
+<div class="d-flex justify-content-center align-items-center" style="height: 100vh;">
+    <div class="card p-4 shadow" style="width: 100%; max-width: 600px; background-color: #2c2c2c; border-radius: 10px;">
+        <div class="card-body">
+            <h3 class="card-title text-center text-white mb-4" style="border-bottom: 2px solid #444; padding-bottom: 10px;">SoD Enha Shaman GCD Analyzer</h3>
+            
+            <!-- Form for fetching logs -->
+            <form action="/" method="get" class="mb-3">
+                <div class="d-flex">
+                    <input type="text" id="report_id" name="report_id" class="form-control me-2" placeholder="Enter WCL Report ID" required value="{{ request.args.get('report_id', '') }}">
+                    <button class="btn btn-info" type="submit">Fetch Log</button>
+                </div>
+            </form>
+
+            <!-- Form for selecting fights and players and fetching events -->
+            <form action="/events" method="get" class="mb-3">
+                <input type="hidden" name="report_id" value="{{ request.args.get('report_id', '') }}">
+                <div class="d-flex align-items-center mb-3">
+                    <label for="fightData" class="form-label text-white me-2 mb-0">Select Fight:</label>
+                    <select name="fightData" id="fightData" class="form-select" required {% if not fights %}disabled{% endif %}>
+                        <option value="" disabled selected>Select a fight...</option>
+                        {% if fights %}
+                            {% for fight in fights %}
+                            <option value="{{ fight.id }}-{{ fight.start }}-{{ fight.end }}"
+                                    {% if fight.id|string == request.args.get('fightData', '').split('-')[0] %}selected{% endif %}>
+                                {{ fight.name }} - 
+                                {% if fight.kill %}
+                                Kill
+                                {% else %}
+                                Wipe
+                                {% endif %}
+                            </option>
+                            {% endfor %}
+                        {% endif %}
+                    </select>
+                </div>
+                <div class="d-flex align-items-center mb-3">
+                    <label for="player_id" class="form-label text-white me-2 mb-0">Select Player:</label>
+                    <select name="player_id" id="player_id" class="form-select" required {% if not fights %}disabled{% endif %}>
+                        <option value="" disabled selected>Select a player...</option>
+                        {% if players %}
+                            {% for player in players if player.class == 'Shaman' %}
+                            <option value="{{ player.id }}"
+                                    {% if player.id|string == request.args.get('player_id', '') %}selected{% endif %}>
+                                {{ player.name }}
+                            </option>
+                            {% endfor %}
+                        {% endif %}
+                    </select>
+                </div>
+                <button class="btn btn-primary w-100" type="submit" {% if not fights %}disabled{% endif %}>Analyze Casts</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
